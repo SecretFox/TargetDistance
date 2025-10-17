@@ -2,7 +2,6 @@ import com.GameInterface.Chat;
 import com.GameInterface.DistributedValue;
 import com.GameInterface.Game.CharacterBase;
 import com.GameInterface.Game.Shortcut;
-import com.GameInterface.UtilsBase;
 import com.Utils.Archive;
 import com.Utils.ID32;
 import com.fox.Utils.Common;
@@ -30,9 +29,6 @@ class com.fox.TargetDistance.Icon
 	private var m_Player:CharacterBase
 	private var m_AbilitySlots:Array = new Array();
 	
-	
-	
-
 	public function Icon(swfRoot: MovieClip)
 	{
 		m_swfRoot = swfRoot
@@ -43,26 +39,20 @@ class com.fox.TargetDistance.Icon
 		m_Mouselistener.onMouseWheel = Delegate.create(this, MouseWheelEventHandler);
 	}
 	
-	private function SlotShortcutRangeEnabled(slot, value){
-		if(m_trackDistance.GetValue()){
-			m_AbilitySlots[ slot - 100] = value;
-			var color = false;
-			for (var id in m_AbilitySlots){
-				if (m_AbilitySlots[id] == false){
-					color = true;
-				}
+	private function SlotShortcutRangeEnabled(){
+		if (m_trackDistance.GetValue()){
+			var foundCount = 0;
+			for (var i in _root.abilitybar_2_.m_AbilitySlots)
+			{
+				var slot = _root.abilitybar_2_.m_AbilitySlots[i];
+				var flag = slot["m_Ability"]["m_Flags"]
+				foundCount += flag & 0x1;
 			}
+			var color = foundCount == 0 ? 0xFFFFFF : foundCount != 6 ? 0xF27209 : 0xFB0000;
 			if (!m_Player.GetOffensiveTarget().IsNull()){
-				if (!color){
-					format.color = 0xFFFFFF;
-					m_DistanceText.setTextFormat(format);
-					m_DistanceText.setNewTextFormat(format);
-				}
-				else{
-					format.color = 0xE10000;
-					m_DistanceText.setTextFormat(format);
-					m_DistanceText.setNewTextFormat(format);
-				}
+				format.color = color;
+				m_DistanceText.setTextFormat(format);
+				m_DistanceText.setNewTextFormat(format);
 			}
 		}
 	}
