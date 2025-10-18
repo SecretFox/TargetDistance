@@ -11,11 +11,12 @@ With GUI unlocked:
 * Scale with mousewheel
 * Change opacity with right click
 
-With GUI locked
-* Left click to enable/disable ability based coloring
-  * If the target is within range of all of your abilities the text will be white
-  * Orange if some are not in range
-  * Red if none are in range
+Commands  
+`/option TargetDistance_Sticky true`[default: true] If true range indicator doesn't get unloaded when target is lost  
+`/option TargetDistance_TrackAbilities  true`[default: true]  
+* If the target is within range of all of your abilities the text will be white
+* Orange if some are not in range
+* Red if none are in range
  
 ### Install
 Extract to `Secret World Legends\Data\Gui\Custom\Flash`

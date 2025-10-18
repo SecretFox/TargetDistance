@@ -1,10 +1,11 @@
-import com.GameInterface.Chat;
 import com.GameInterface.DistributedValue;
-import com.GameInterface.Game.CharacterBase;
+import com.GameInterface.Game.Character;
 import com.GameInterface.Game.Shortcut;
 import com.Utils.Archive;
+import com.Utils.Draw;
 import com.Utils.ID32;
 import com.fox.Utils.Common;
+import flash.filters.DropShadowFilter;
 import flash.geom.Point;
 import mx.utils.Delegate;
 import com.Utils.GlobalSignal;
@@ -17,39 +18,47 @@ class com.fox.TargetDistance.Icon
 	private var m_Icon:MovieClip;
 	private var m_BGClip:MovieClip;
 	private var format:TextFormat;
-	
-	private var m_trackDistance:DistributedValue;
-	private var m_pos:Point;
-	private var m_fontSize:Number;
-	private var m_BGAlpha:Number;
 
-	private var m_Target:CharacterBase
-	private var m_Mouselistener:Object
-	private var update;
-	private var m_Player:CharacterBase
-	private var m_AbilitySlots:Array = new Array();
-	
+	private var m_trackAbilities:DistributedValue;
+	private var m_Sticky:DistributedValue;
+
+	private var m_Target:Character
+	private var updateInterval:Number;
+	private var m_Player:Character
+	public var m_Config:Archive;
+
 	public function Icon(swfRoot: MovieClip)
 	{
-		m_swfRoot = swfRoot
-		m_Player = new CharacterBase(CharacterBase.GetClientCharID());
-		m_Player.SignalOffensiveTargetChanged.Connect(UpdateTarget, this);
+		m_swfRoot = swfRoot;
+		m_Player = Character.GetClientCharacter();
 		Shortcut.SignalShortcutRangeEnabled.Connect( SlotShortcutRangeEnabled, this );
-		m_Mouselistener = new Object();
-		m_Mouselistener.onMouseWheel = Delegate.create(this, MouseWheelEventHandler);
+		m_trackAbilities = DistributedValue.Create("TargetDistance_TrackAbilities");
+		m_Sticky = DistributedValue.Create("TargetDistance_Sticky");
+		m_trackAbilities.SignalChanged.Connect(SlotTrackAbilities, this);
 	}
-	
-	private function SlotShortcutRangeEnabled(){
-		if (m_trackDistance.GetValue()){
+
+	private function SlotShortcutRangeEnabled(s, v, buffered)
+	{
+		if (!buffered)
+		{
+			setTimeout(Delegate.create(this, SlotShortcutRangeEnabled), 5, s, v, true);
+			return;
+		}
+		var maxCount = 6;
+		if (m_trackAbilities.GetValue())
+		{
 			var foundCount = 0;
-			for (var i in _root.abilitybar_2_.m_AbilitySlots)
+			var rangeAbilities = 0;
+			for (var i in _root.abilitybar.m_AbilitySlots)
 			{
-				var slot = _root.abilitybar_2_.m_AbilitySlots[i];
-				var flag = slot["m_Ability"]["m_Flags"]
-				foundCount += flag & 0x1;
+				var slot = _root.abilitybar.m_AbilitySlots[i];
+				var flag = slot["m_Ability"]["m_Flags"];
+				if (flag & 0x1/* || flag & 0x8*/)
+					foundCount += 1;
 			}
-			var color = foundCount == 0 ? 0xFFFFFF : foundCount != 6 ? 0xF27209 : 0xFB0000;
-			if (!m_Player.GetOffensiveTarget().IsNull()){
+			var color = foundCount == 0 ? 0xFFFFFF : foundCount != maxCount ? 0xF27209 : 0xFB0000;
+			if (m_Target)
+			{
 				format.color = color;
 				m_DistanceText.setTextFormat(format);
 				m_DistanceText.setNewTextFormat(format);
@@ -57,38 +66,26 @@ class com.fox.TargetDistance.Icon
 		}
 	}
 
-	private function MouseWheelEventHandler(delta:Number):Void {
-		if (Mouse.getTopMostEntity() == m_TargetDistanceIcon) {
-			if (delta < 0) {
-				var tar = format.size-1;
-				if(tar>10){
-					format.size = tar;
-					m_DistanceText.setNewTextFormat(format);
-					m_DistanceText.setTextFormat(format);
-					m_fontSize = tar;
-				}
-			}
-			else {
-				var tar = format.size+1;
-				if(tar<70){
-					format.size = tar;
-					m_DistanceText.setNewTextFormat(format);
-					m_DistanceText.setTextFormat(format);
-					m_fontSize = tar;
-				}
-			}
+	private function onMouseWheel(delta:Number):Void
+	{
+		if (Mouse.getTopMostEntity() == m_TargetDistanceIcon)
+		{
+			var scale = m_TargetDistanceIcon._xscale + delta * 5;
+			scale = Math.min(Math.max(10, scale), 500);
+			m_TargetDistanceIcon._xscale = m_TargetDistanceIcon._yscale = scale;
+			m_Config.ReplaceEntry("Scale", scale);
 		}
 	}
-	
+
 	private function GuiEdit(state:Boolean)
 	{
 		if (state)
 		{
-			Mouse.addListener(m_Mouselistener);
+			Mouse.addListener(this);
 			m_Player.SignalOffensiveTargetChanged.Disconnect(UpdateTarget, this);
-			clearInterval(update);
+			clearInterval(updateInterval);
 			m_TargetDistanceIcon._visible = true;
-			m_DistanceText.text = "X.Xm"
+			m_DistanceText.text = "00.0m";
 			m_TargetDistanceIcon.onPress = Delegate.create(this,function ()
 			{
 				this.m_TargetDistanceIcon.startDrag();
@@ -96,38 +93,51 @@ class com.fox.TargetDistance.Icon
 			m_TargetDistanceIcon.onRelease = Delegate.create(this,function ()
 			{
 				this.m_TargetDistanceIcon.stopDrag();
-				this.UpdateIconPosition()
+				this.UpdatePosition()
 			});
 			m_TargetDistanceIcon.onReleaseOutside = Delegate.create(this,function ()
 			{
 				this.m_TargetDistanceIcon.stopDrag();
-				this.UpdateIconPosition()
+				this.UpdatePosition()
+			});
+			m_TargetDistanceIcon.onPressAux = Delegate.create(this, function()
+			{
+				var alpha = this.m_BGClip._alpha + 10;
+				if (alpha > 100) alpha = 0;
+				this.m_BGClip._alpha = alpha;
+				this.m_Config.ReplaceEntry("Alpha", alpha);
 			});
 		}
 		else
 		{
-			Mouse.removeListener(m_Mouselistener);
-			m_Player.SignalOffensiveTargetChanged.Connect(UpdateTarget, this);
-			m_TargetDistanceIcon._visible = false;
+			if (m_Target)
+			{
+				clearInterval(updateInterval);
+				updateInterval = setInterval(Delegate.create(this, UpdateDistance), 50);
+			}
+			else
+			{
+				m_TargetDistanceIcon._visible = false;
+			}
+			Mouse.removeListener(this);
+			if (!m_Player.SignalOffensiveTargetChanged.IsSlotConnected(UpdateTarget, this))
+			{
+				m_Player.SignalOffensiveTargetChanged.Connect(UpdateTarget, this);
+			}
+			
 			m_TargetDistanceIcon.stopDrag();
-			m_TargetDistanceIcon.onPress = Delegate.create(this, function(){
-				this.m_trackDistance.SetValue(!this.m_trackDistance.GetValue());
-				(this.m_trackDistance.GetValue())?Chat.SignalShowFIFOMessage.Emit("Tracking abilities",0):Chat.SignalShowFIFOMessage.Emit("Untracking abilities",0);
-			});
-			m_TargetDistanceIcon.onPressAux = Delegate.create(this, function(){
-				var alpha = this.m_BGAlpha + 10;
-				if (alpha > 100) alpha = 0;
-				this.m_BGClip._alpha = alpha;
-				this.m_BGAlpha = alpha;
-			});	
-			m_TargetDistanceIcon.onRelease = undefined;
-			m_TargetDistanceIcon.onReleaseOutside = undefined;
-			UpdateIconPosition();
+			m_TargetDistanceIcon.onPress = 
+				m_TargetDistanceIcon.onRelease = 
+				m_TargetDistanceIcon.onReleaseOutside =
+				m_TargetDistanceIcon.onPressAux = 
+				undefined;
 		}
 	}
-	
-	private function ChangeBG(){
-		if (!m_trackDistance.GetValue()){
+
+	private function SlotTrackAbilities()
+	{
+		if (!m_trackAbilities.GetValue())
+		{
 			format.color = 0xFFFFFF;
 			m_DistanceText.setTextFormat(format);
 			m_DistanceText.setNewTextFormat(format);
@@ -136,105 +146,104 @@ class com.fox.TargetDistance.Icon
 
 	public function Activate(config:Archive):Void
 	{
-		m_pos = Point(config.FindEntry("CoordPos", new Point(550, 100)));
-		m_fontSize = Number(config.FindEntry("fontSize", 14));
-		m_swfRoot.onEnterFrame = Delegate.create(this, onframe);
-		m_trackDistance = DistributedValue.Create("TrackDistance_Track");
-		m_trackDistance.SetValue(Boolean(config.FindEntry("Track", true)));
-		m_BGAlpha = Number(config.FindEntry("BGAlpha", 100));
-		m_AbilitySlots = new Array();
-		m_AbilitySlots.push(true, true, true, true, true);
-		m_trackDistance.SignalChanged.Connect(ChangeBG, this);
+		m_Config = config;
+		if (!m_TargetDistanceIcon)
+		{
+			CreateDistanceClip();
+		}
 	}
 
 	public function Deactivate()
 	{
-		var config:Archive = new Archive();
-		config.AddEntry("CoordPos", m_pos);
-		config.AddEntry("fontSize", m_fontSize);
-		config.AddEntry("Track", m_trackDistance.GetValue());
-		config.AddEntry("BGAlpha",m_BGAlpha);
-		clearInterval(update);
-		return config
+		return m_Config;
+	}
+	
+	private function UpdateTarget(id:ID32)
+	{
+		if (!id.IsNull())
+		{
+			if ( m_Target && m_Target.GetID().Equal(id)) return;
+			clearInterval(updateInterval);
+			if (m_Target)
+			{
+				m_Target.SignalCharacterDestructed.Disconnect(SlotCharacterDestructed, this);
+			}
+			m_Target = Character.GetCharacter(id);
+			updateInterval = setInterval(Delegate.create(this, UpdateDistance), 50);
+			m_TargetDistanceIcon._visible = true;
+			m_Target.SignalCharacterDestructed.Connect(SlotCharacterDestructed, this);
+		}
+		else if(!m_Sticky.GetValue())
+		{
+			clearInterval(updateInterval);
+			m_TargetDistanceIcon._visible = false;
+			m_Target.SignalCharacterDestructed.Disconnect(SlotCharacterDestructed, this);
+			m_Target = undefined;
+		}
+		if ( m_Target)
+		{
+			SlotShortcutRangeEnabled();
+		}
+	}
+	
+	public function SlotCharacterDestructed():Void 
+	{
+		clearInterval(updateInterval);
+		m_TargetDistanceIcon._visible = false;
+		m_Target.SignalCharacterDestructed.Disconnect(SlotCharacterDestructed, this);
+		m_Target = undefined;
+	}
+	
+	public function round(num)
+	{
+		return Math.round(num * 10) / 10
 	}
 
-	private function onframe():Void
+	private function UpdateDistance()
 	{
-		m_swfRoot.onEnterFrame = undefined;
-		if (m_swfRoot.TopIcon == undefined)
-		{
-			CreateTopIcon();
-		}
-	}
-	
-	
-	private function UpdateTarget(id:ID32){
-		if (!id.IsNull()){
-			m_Target = new CharacterBase(id);
-			update = setInterval(Delegate.create(this, UpdateDistance), 50);
-			m_TargetDistanceIcon._visible = true;
-		}
-		else{
-			clearInterval(update);
-			m_TargetDistanceIcon._visible = false;
-			m_AbilitySlots = new Array();
-			m_AbilitySlots.push(true, true, true, true, true);
-		}
-	}
-	
-	private function UpdateDistance(){
-		var m_distance = Math.round(m_Target.GetDistanceToPlayer() * 10) / 10
+		var m_distance = round(m_Target.GetDistanceToPlayer());
 		if (m_distance % 1 == 0) m_distance = string(m_distance) + ".0";
 		m_DistanceText.text = string(m_distance) + "m";
-		m_BGClip._width = m_DistanceText._width;
-		m_BGClip._height = m_DistanceText._height;
 	}
 
-	private function UpdateIconPosition():Void
+	private function UpdatePosition():Void
 	{
-		m_pos = Common.getOnScreen(m_TargetDistanceIcon);
-		m_pos = Common.getOnScreen(m_TargetDistanceIcon);
-		m_TargetDistanceIcon._x = m_pos.x;
-		m_TargetDistanceIcon._y = m_pos.y;
+		var pos = Common.getOnScreen(m_TargetDistanceIcon);
+		m_TargetDistanceIcon._x = pos.x;
+		m_TargetDistanceIcon._y = pos.y;
+		m_Config.ReplaceEntry("Pos", pos);
 	}
-	
-	public function CreateTopIcon():Void
+
+	public function CreateDistanceClip():Void
 	{
-		m_TargetDistanceIcon = m_swfRoot.createEmptyMovieClip("TopIcon", m_swfRoot.getNextHighestDepth());
-		m_TargetDistanceIcon._x = m_pos.x;
-		m_TargetDistanceIcon._y = m_pos.y;
-		format = new TextFormat("src.assets.fonts.FuturaMD_BT.ttf", m_fontSize, 0xFFFFFF, true);
+		var pos = m_Config.FindEntry("Pos", new Point(550, 100));
+		var Scale = m_Config.FindEntry("Scale", 100);
+		var Alpha = m_Config.FindEntry("Alpha", 100);
+		m_TargetDistanceIcon = m_swfRoot.createEmptyMovieClip("m_TargetDistanceIcon", m_swfRoot.getNextHighestDepth());
+		m_TargetDistanceIcon._x = pos.x;
+		m_TargetDistanceIcon._y = pos.y;
+		format = new TextFormat("_StandardFont", 14, 0xFFFFFF, true, false, false, undefined, undefined, "center");
 		m_BGClip = m_TargetDistanceIcon.createEmptyMovieClip("BG", m_TargetDistanceIcon.getNextHighestDepth());
-		m_DistanceText = m_TargetDistanceIcon.createTextField("m_DistanceText",m_TargetDistanceIcon.getNextHighestDepth(),0, 0, 0, 0);
-
-		m_DistanceText.selectable = false;
-		m_DistanceText.embedFonts = true;
-		m_DistanceText.autoSize = true;
+		
+		m_DistanceText = m_TargetDistanceIcon.createTextField("m_DistanceText", m_TargetDistanceIcon.getNextHighestDepth(), 3, 3, 45, 18);
+		m_DistanceText.filters = [new DropShadowFilter(20, 45, 0, 1, 0, 0, 107, 2, false, false, false)];
 		m_DistanceText.setNewTextFormat(format);
 		m_DistanceText.setTextFormat(format);
+		m_DistanceText.selectable = false;
+		m_DistanceText.embedFonts = true;
+		m_DistanceText.autoFit = true;
+		m_DistanceText.autoSize = "center";
+		m_TargetDistanceIcon._xscale = m_TargetDistanceIcon._yscale = Scale;
 		
-		m_BGClip.beginFill(0x000000, 100);
-		m_BGClip.moveTo(0, 0)
-		m_BGClip.lineTo(2, 0);
-		m_BGClip.lineTo(2, 2);
-		m_BGClip.lineTo(0, 2);
-		m_BGClip.lineTo(0, 0);
-		m_BGClip.endFill();
-		m_BGClip._alpha = m_BGAlpha;
-		
-		
+		m_DistanceText.text = "00.0m";
 
-		m_TargetDistanceIcon.onPress = Delegate.create(this, function(){
-			this.m_trackDistance.SetValue(!this.m_trackDistance.GetValue());
-			(this.m_trackDistance.GetValue())?Chat.SignalShowFIFOMessage.Emit("Tracking abilities",0):Chat.SignalShowFIFOMessage.Emit("Untracking abilities",0);
-		});
-		m_TargetDistanceIcon.onPressAux = Delegate.create(this, function(){
-			var alpha = this.m_BGAlpha + 10;
-			if (alpha > 100) alpha = 0;
-			this.m_BGClip._alpha = alpha;
-			this.m_BGAlpha = alpha;
-		});	
+		Draw.DrawRectangle(m_BGClip, 0, 0, m_DistanceText._width + 6, m_DistanceText._height + 6, 0x000000, 100, [4, 4, 4, 4]);
+		m_BGClip._alpha = Alpha;
+		m_DistanceText.text = "";
+		
+		GuiEdit(false);
 		GlobalSignal.SignalSetGUIEditMode.Connect(GuiEdit, this);
 		m_TargetDistanceIcon._visible = false;
+		UpdateTarget(m_Player.GetOffensiveTarget());
 	}
 }

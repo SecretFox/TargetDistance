@@ -1,5 +1,7 @@
 <?xml version="1.0" encoding="UTF-8" standalone="yes" ?> 
 <Root>
 	<Value name="TargetDistance" value="true" />
+	<Value name="TargetDistance_TrackAbilities" value="true" />
+	<Value name="TargetDistance_Sticky" value="true" />
 	<Archive name="TargetDistance_Cfg" />
 </Root>
